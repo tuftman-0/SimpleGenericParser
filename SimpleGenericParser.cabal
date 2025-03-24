@@ -1,0 +1,21 @@
+cabal-version:      3.0
+name:               SimpleGenericParser
+version:            0.1.0.0
+-- synopsis:
+-- description:
+license:            ISC
+license-file:       LICENSE
+author:             tuftman-0
+-- maintainer:
+-- copyright:
+build-type:         Simple
+-- extra-source-files:
+
+common warnings
+    ghc-options: -Wall
+
+library
+    exposed-modules:  SimpleGenericParser
+    hs-source-dirs:   src
+    build-depends:    base ^>=4.18.2.1
+    default-language: Haskell2010
