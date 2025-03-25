@@ -106,7 +106,6 @@ instance (Eq a, Show a) => Stream [a] where
 
 -- a (Parser s a) is a parser that operates on an input/stream of type `s` and has a result type of `a`
 -- so a (Parser String Int) would be a parser that parses a string and gives an Int in the result
--- a (Parser ByteString
 newtype Parser s a = Parser {runParser :: s -> ParserResult s (a, s)}
 
 -- Run a parser
