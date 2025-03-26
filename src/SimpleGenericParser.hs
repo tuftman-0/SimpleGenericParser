@@ -37,6 +37,7 @@ module SimpleGenericParser (
     letter,
     alphaNum,
     -- Type aliases
+    StreamOf,
     StringParser,
     StringParserResult,
 ) where
