@@ -213,11 +213,13 @@ tokens ts = Parser $ \input ->
         else Failure ("Expected " ++ show ts, input)
 
 -- Parse one of the tokens in the list
-oneOf :: (Stream s) => [Elem s] -> Parser s (Elem s)
+-- oneOf :: (Stream s) => [Elem s] -> Parser s (Elem s)
+oneOf :: (Stream s, Foldable t, Show (t (Elem s))) => t (Elem s) -> Parser s (Elem s)
 oneOf ts = satisfy (`elem` ts) ("one of " ++ show ts)
 
 -- Parse none of the tokens in the list
-noneOf :: (Stream s) => [Elem s] -> Parser s (Elem s)
+-- noneOf :: (Stream s) => [Elem s] -> Parser s (Elem s)
+noneOf :: (Stream s, Foldable t, Show (t (Elem s))) => t (Elem s) -> Parser s (Elem s)
 noneOf ts = satisfy (`notElem` ts) ("none of " ++ show ts)
 
 -- Parse optional value
@@ -244,26 +246,33 @@ sepBy1 p sep = do
     xs <- many (sep *> p)
     return (x : xs)
 
--- Character-specific parsers (for String streams)
-char :: Char -> Parser String Char
+-- Character-specific parsers (for Char streams)
+-- char :: Char -> Parser String Char
+char :: (StreamOf s Char) => Char -> Parser s Char
 char = token
 
-string :: String -> Parser String String
+-- string :: String -> Parser String String
+string :: (StreamOf s Char) => String -> Parser s String
 string = tokens
 
-spaces :: Parser String String
+-- spaces :: Parser String String
+spaces :: (StreamOf s Char) => Parser s String
 spaces = many (char ' ')
 
-whitespace :: Parser String String
+-- whitespace :: Parser String String
+whitespace :: (StreamOf s Char) => Parser s String
 whitespace = many (satisfy isSpace "whitespace")
 
-digit :: Parser String Char
+-- digit :: Parser String Char
+digit :: (StreamOf s Char) => Parser s Char
 digit = satisfy isDigit "digit"
 
-letter :: Parser String Char
+-- letter :: Parser String Char
+letter :: (StreamOf s Char) => Parser s Char
 letter = satisfy isAlpha "letter"
 
-alphaNum :: Parser String Char
+-- alphaNum :: Parser String Char
+alphaNum :: (StreamOf s Char) => Parser s Char
 alphaNum = satisfy isAlphaNum "alphanumeric character"
 
 -- Type aliases for common cases
