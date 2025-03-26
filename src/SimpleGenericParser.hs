@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE TypeOperators #-}
 
 module SimpleGenericParser (
     -- Types
@@ -92,6 +94,9 @@ class (Eq (Elem s), Show (Elem s)) => Stream s where
     -- Convert to string for error messages
     showInput :: s -> String
 
+-- Constraint for Arbitrary Stream s with element type e (requires ConstraintKinds, TypeOperators)
+type StreamOf s e = (Stream s, Elem s ~ e)
+
 -- Stream instance for lists of tokens
 instance (Eq a, Show a) => Stream [a] where
     type Elem [a] = a
@@ -103,6 +108,8 @@ instance (Eq a, Show a) => Stream [a] where
     lengthS = length
     isSeqPrefixOf = List.isPrefixOf
     showInput = show
+
+
 
 -- a (Parser s a) is a parser that operates on an input/stream of type `s` and has a result type of `a`
 -- so a (Parser String Int) would be a parser that parses a string and gives an Int in the result
