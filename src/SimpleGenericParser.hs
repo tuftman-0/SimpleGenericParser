@@ -17,6 +17,7 @@ module SimpleGenericParser (
     anyToken,
     satisfy,
     token,
+    notToken,
     tokens,
     oneOf,
     noneOf,
