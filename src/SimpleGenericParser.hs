@@ -22,6 +22,7 @@ module SimpleGenericParser (
     oneOf,
     noneOf,
     -- Combinators
+    try,
     optional,
     choice,
     between,
@@ -49,7 +50,7 @@ import Data.Foldable (asum)
 import Data.Kind (Type)
 import qualified Data.List as List
 
--- Result type parameterized by both input and result type
+-- Result type parameterized by both input type (s) and result type (a)
 data ParserResult s a
     = Success a           -- a is (result,  unconsumed stream) from the parser definition
     | Failure (String, s) -- (ErrorMessage, Unconsumed stream)
@@ -151,6 +152,9 @@ instance Monad (Parser s) where
             Failure err -> Failure err
             Success (v, rest) -> runParser (f v) rest
 
+instance MonadFail (Parser s) where
+    fail msg = Parser $ \input -> Failure (msg, input)
+
 -- slightly annoying Stream conditions because we use lengthS to improve errors
 instance (Stream s) => Alternative (Parser s) where
     empty = Parser $ \input ->
@@ -164,7 +168,7 @@ instance (Stream s) => Alternative (Parser s) where
                     Success result -> Success result
                     -- if both parsers fail take the error from the parser that consumed more
                     Failure (err2, remaining2) ->
-                        case compare (lengthS remaining2) (lengthS remaining2) of
+                        case compare (lengthS remaining1) (lengthS remaining2) of
                             LT -> Failure (err1, remaining1)
                             EQ -> Failure (err1 ++ " or " ++ err2, remaining1)
                             GT -> Failure (err2, remaining2)
@@ -191,13 +195,11 @@ anyToken = Parser $ \input ->
 
 -- Match a token that satisfies a predicate
 satisfy :: (Stream s) => (Elem s -> Bool) -> String -> Parser s (Elem s)
-satisfy pred expected = Parser $ \input ->
-    case uncons input of
-        Nothing -> Failure ("Unexpected end of input, expected " ++ expected, input)
-        Just (t, rest) ->
-            if pred t
-                then Success (t, rest)
-                else Failure ("Expected " ++ expected ++ ", found " ++ show t, input)
+satisfy pred expected = try $ do
+    t <- anyToken `modifyError` \msg -> msg ++ ", Expected" ++ expected
+    if pred t
+        then return t
+        else fail $ "Expected " ++ expected ++ ", found " ++ show t
 
 -- Parse a specific token
 token :: (Stream s) => Elem s -> Parser s (Elem s)
@@ -222,6 +224,20 @@ oneOf ts = satisfy (`elem` ts) ("one of " ++ show ts)
 -- noneOf :: (Stream s) => [Elem s] -> Parser s (Elem s)
 noneOf :: (Stream s, Foldable t, Show (t (Elem s))) => t (Elem s) -> Parser s (Elem s)
 noneOf ts = satisfy (`notElem` ts) ("none of " ++ show ts)
+
+-- tries a parser but on failure doesn't consume input
+try :: Parser s a -> Parser s a
+try p = Parser $ \input ->
+    case runParser p input of
+        Failure (msg, _) -> Failure (msg, input)
+        success -> success
+
+-- modifies the error of a parser on failure using a function (modifyErr)
+modifyError :: Parser s a -> (String -> String) -> Parser s a
+modifyError parser modify = Parser $ \input ->
+    case runParser parser input of
+        Failure (msg, remaining) -> Failure (modify msg, remaining)
+        success -> success
 
 -- Parse optional value
 optional :: (Stream s) => Parser s a -> Parser s (Maybe a)
