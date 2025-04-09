@@ -196,7 +196,7 @@ anyToken = Parser $ \input ->
 -- Match a token that satisfies a predicate
 satisfy :: (Stream s) => (Elem s -> Bool) -> String -> Parser s (Elem s)
 satisfy pred expected = try $ do
-    t <- anyToken `modifyError` \msg -> msg ++ ", Expected" ++ expected
+    t <- anyToken `modifyError` \msg -> msg ++ ", Expected " ++ expected
     if pred t
         then return t
         else fail $ "Expected " ++ expected ++ ", found " ++ show t
