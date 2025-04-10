@@ -54,13 +54,38 @@ type ParseError = String
 
 pattern Success :: (a, s) -> Either (ParseError, s) (a, s)
 pattern Success result = Right result
--- pattern Success result <- Right result
---   where Success result = Right result
 
 pattern Failure :: (String, s) -> Either (ParseError, s) (a, s)
 pattern Failure err = Left err
--- pattern Failure err <- Left err
---   where Failure err = Left err
+
+
+data SourcePos = SourcePos 
+  { line   :: Int
+  , column :: Int 
+  } deriving (Show, Eq)
+
+data ParserState s = ParserState
+  { input     :: s         -- The remaining input stream
+  , pos       :: SourcePos -- The current position in the input
+  , committed :: Bool      -- True if input has been consumed in a non-backtrackable way
+  } deriving (Show, Eq)
+
+
+-- a (Parser s a) is a parser that operates on an input/stream of type `s` and has a result type of `a`
+-- so a (Parser String Int) would be a parser that parses a string and gives an Int in the result
+-- newtype Parser s a = Parser {runParser :: s -> Either (ParseError, s) (a, s)}
+newtype Parser s a = Parser {runParser :: ParserState s -> Either (ParseError, ParserState s) (a, ParserState s)}
+
+-- Run a parser
+parse :: Parser s a -> s -> Either (ParseError, s) a
+parse p input = case runParser p input of
+    Success (result, _) -> Right result
+    Failure err -> Left err
+
+parseFile :: FilePath -> Parser String a -> IO (Either (ParseError, String) a)
+parseFile filePath parser = do
+    input <- readFile filePath
+    return $ parse parser input
 
 -- generic Stream class so you can Implement your own Instances for whatever type e.g. Text/ByteString
 class (Eq (Elem s), Show (Elem s)) => Stream s where
@@ -93,23 +118,6 @@ instance (Eq a, Show a) => Stream [a] where
     lengthS = length
     isSeqPrefixOf = List.isPrefixOf
     showInput = show
-
-
--- a (Parser s a) is a parser that operates on an input/stream of type `s` and has a result type of `a`
--- so a (Parser String Int) would be a parser that parses a string and gives an Int in the result
--- newtype Parser s a = Parser {runParser :: s -> ParserResult s (a, s)}
-newtype Parser s a = Parser {runParser :: s -> Either (ParseError, s) (a, s)}
-
--- Run a parser
-parse :: Parser s a -> s -> Either (ParseError, s) a
-parse p input = case runParser p input of
-    Success (result, _) -> Right result
-    Failure err -> Left err
-
-parseFile :: FilePath -> Parser String a -> IO (Either (ParseError, String) a)
-parseFile filePath parser = do
-    input <- readFile filePath
-    return $ parse parser input
 
 instance Functor (Parser s) where
     fmap f parser = Parser $ \input ->
