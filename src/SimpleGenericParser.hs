@@ -3,11 +3,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE PatternSynonyms #-}
+
 
 module SimpleGenericParser (
     -- Types
     Parser (..),
-    ParserResult (..),
+    -- ParserResult (..),
     -- Stream typeclass
     Stream (..),
     -- Running parsers
@@ -40,8 +42,6 @@ module SimpleGenericParser (
     alphaNum,
     -- Type aliases
     StreamOf,
-    StringParser,
-    StringParserResult,
 ) where
 
 import Control.Applicative (Alternative (..))
@@ -50,35 +50,17 @@ import Data.Foldable (asum)
 import Data.Kind (Type)
 import qualified Data.List as List
 
--- Result type parameterized by both input type (s) and result type (a)
-data ParserResult s a
-    = Success a           -- a is (result,  unconsumed stream) from the parser definition
-    | Failure (String, s) -- (ErrorMessage, Unconsumed stream)
-    deriving (Show, Eq)
+type ParseError = String
 
-toEither :: ParserResult s a -> Either (String, s) a
-toEither (Success a) = Right a
-toEither (Failure e) = Left e
+pattern Success :: (a, s) -> Either (ParseError, s) (a, s)
+pattern Success result = Right result
+-- pattern Success result <- Right result
+--   where Success result = Right result
 
-fromEither :: Either (String, s) a -> ParserResult s a
-fromEither (Right a) = Success a
-fromEither (Left e) = Failure e
-
--- Functor, Applicative, Monad instances
-instance Functor (ParserResult s) where
-    fmap f (Success a) = Success (f a)
-    fmap _ (Failure e) = Failure e
-
-instance Applicative (ParserResult s) where
-    pure = Success
-    (Success f) <*> (Success a) = Success (f a)
-    (Failure e) <*> _ = Failure e
-    _ <*> (Failure e) = Failure e
-
-instance Monad (ParserResult s) where
-    (Success a) >>= f = f a
-    (Failure e) >>= _ = Failure e
-
+pattern Failure :: (String, s) -> Either (ParseError, s) (a, s)
+pattern Failure err = Left err
+-- pattern Failure err <- Left err
+--   where Failure err = Left err
 
 -- generic Stream class so you can Implement your own Instances for whatever type e.g. Text/ByteString
 class (Eq (Elem s), Show (Elem s)) => Stream s where
@@ -113,18 +95,18 @@ instance (Eq a, Show a) => Stream [a] where
     showInput = show
 
 
-
 -- a (Parser s a) is a parser that operates on an input/stream of type `s` and has a result type of `a`
 -- so a (Parser String Int) would be a parser that parses a string and gives an Int in the result
-newtype Parser s a = Parser {runParser :: s -> ParserResult s (a, s)}
+-- newtype Parser s a = Parser {runParser :: s -> ParserResult s (a, s)}
+newtype Parser s a = Parser {runParser :: s -> Either (ParseError, s) (a, s)}
 
 -- Run a parser
-parse :: Parser s a -> s -> ParserResult s a
+parse :: Parser s a -> s -> Either (ParseError, s) a
 parse p input = case runParser p input of
-    Success (result, _) -> Success result
-    Failure err -> Failure err
+    Success (result, _) -> Right result
+    Failure err -> Left err
 
-parseFile :: FilePath -> Parser String a -> IO (ParserResult String a)
+parseFile :: FilePath -> Parser String a -> IO (Either (ParseError, String) a)
 parseFile filePath parser = do
     input <- readFile filePath
     return $ parse parser input
@@ -160,6 +142,19 @@ instance (Stream s) => Alternative (Parser s) where
     empty = Parser $ \input ->
         Failure ("Empty parser", input)
 
+    -- p1 <|> p2 = Parser $ \input ->
+    --     case runParser p1 input of
+    --         Success result -> Success result
+    --         Failure (err1, remaining1) ->
+    --             case runParser p2 input of
+    --                 Success result -> Success result
+    --                 -- if both parsers fail take the error from the parser that consumed more
+    --                 Failure (err2, remaining2) ->
+    --                     case compare (lengthS remaining1) (lengthS remaining2) of
+    --                         LT -> Failure (err1, remaining1)
+    --                         EQ -> Failure (err1 ++ " or " ++ err2, remaining1)
+    --                         GT -> Failure (err2, remaining2)
+
     p1 <|> p2 = Parser $ \input ->
         case runParser p1 input of
             Success result -> Success result
@@ -173,6 +168,7 @@ instance (Stream s) => Alternative (Parser s) where
                             EQ -> Failure (err1 ++ " or " ++ err2, remaining1)
                             GT -> Failure (err2, remaining2)
 
+
     many p = Parser $ \input ->
         case runParser p input of
             Failure _ -> Success ([], input)
@@ -185,6 +181,13 @@ instance (Stream s) => Alternative (Parser s) where
         x <- p
         xs <- many p
         return (x : xs)
+
+newtype Committed s a = Committed {unCommitted :: Parser s a}
+
+try' :: Either (Committed s a) (Parser s a) -> Parser s a
+try' (Right p) = try p  -- The usual backtracking try.
+try' (Left (Committed p)) = p  -- Strip the commit wrapper and don’t reset on failure.
+
 
 -- Get any token
 anyToken :: (Stream s) => Parser s (Elem s)
@@ -231,6 +234,14 @@ try p = Parser $ \input ->
     case runParser p input of
         Failure (msg, _) -> Failure (msg, input)
         success -> success
+
+-- -- A committed choice combinator (or cut)
+-- commit :: Parser s a -> Parser s a
+-- commit p = Parser $ \input ->
+--   case runParser p input of
+--       Failure err -> err `seq` Failure err  -- The key is that input is not reset!
+--       success -> success
+
 
 -- modifies the error of a parser on failure using a function (modifyErr)
 modifyError :: Parser s a -> (String -> String) -> Parser s a
@@ -291,7 +302,3 @@ letter = satisfy isAlpha "letter"
 -- alphaNum :: Parser String Char
 alphaNum :: (StreamOf s Char) => Parser s Char
 alphaNum = satisfy isAlphaNum "alphanumeric character"
-
--- Type aliases for common cases
-type StringParser a = Parser String a
-type StringParserResult a = ParserResult String a
