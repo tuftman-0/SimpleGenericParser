@@ -4,6 +4,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE InstanceSigs #-}
 
 
 module SimpleGenericParser (
@@ -14,7 +15,7 @@ module SimpleGenericParser (
     Stream (..),
     -- Running parsers
     parse,
-    parseFile,
+    -- parseFile,
     -- Basic parsers
     anyToken,
     satisfy,
@@ -52,40 +53,34 @@ import qualified Data.List as List
 
 type ParseError = String
 
-pattern Success :: (a, s) -> Either (ParseError, s) (a, s)
+pattern Success :: (a, st) -> Either (ParseError, st) (a, st)
 pattern Success result = Right result
 
-pattern Failure :: (String, s) -> Either (ParseError, s) (a, s)
+pattern Failure :: (String, st) -> Either (ParseError, st) (a, st)
 pattern Failure err = Left err
 
 
-data SourcePos = SourcePos 
-  { line   :: Int
-  , column :: Int 
-  } deriving (Show, Eq)
-
 data ParserState s = ParserState
-  { input     :: s         -- The remaining input stream
-  , pos       :: SourcePos -- The current position in the input
-  , committed :: Bool      -- True if input has been consumed in a non-backtrackable way
+  { input :: s         -- The remaining input stream
+  , pos   :: Int       -- The current position in the input
   } deriving (Show, Eq)
 
+
+-- Create an initial state from an input stream.
+mkInitialState :: s -> ParserState s
+mkInitialState s = ParserState { input = s, pos = 0 }
 
 -- a (Parser s a) is a parser that operates on an input/stream of type `s` and has a result type of `a`
 -- so a (Parser String Int) would be a parser that parses a string and gives an Int in the result
 -- newtype Parser s a = Parser {runParser :: s -> Either (ParseError, s) (a, s)}
 newtype Parser s a = Parser {runParser :: ParserState s -> Either (ParseError, ParserState s) (a, ParserState s)}
 
--- Run a parser
-parse :: Parser s a -> s -> Either (ParseError, s) a
-parse p input = case runParser p input of
-    Success (result, _) -> Right result
-    Failure err -> Left err
 
-parseFile :: FilePath -> Parser String a -> IO (Either (ParseError, String) a)
-parseFile filePath parser = do
-    input <- readFile filePath
-    return $ parse parser input
+parse :: Parser s a -> s -> Either (String, s) (a, s)
+parse p s =
+    case runParser p (mkInitialState s) of
+      Success (a,   st) -> Success (a, input st)
+      Failure (err, st) -> Failure (err, input st)
 
 -- generic Stream class so you can Implement your own Instances for whatever type e.g. Text/ByteString
 class (Eq (Elem s), Show (Elem s)) => Stream s where
@@ -94,9 +89,10 @@ class (Eq (Elem s), Show (Elem s)) => Stream s where
     uncons :: s -> Maybe (Elem s, s)
 
     -- For efficiency
+    lengthS :: s -> Int
     takeS :: Int -> s -> s
     dropS :: Int -> s -> s
-    lengthS :: s -> Int
+    splitAtS :: Int -> s -> (s, s)
 
     -- Test for prefix
     isSeqPrefixOf :: [Elem s] -> s -> Bool
@@ -113,9 +109,11 @@ instance (Eq a, Show a) => Stream [a] where
     uncons [] = Nothing
     uncons (x : xs) = Just (x, xs)
 
+    lengthS = length
     takeS = take
     dropS = drop
-    lengthS = length
+    splitAtS = splitAt
+
     isSeqPrefixOf = List.isPrefixOf
     showInput = show
 
@@ -146,51 +144,27 @@ instance MonadFail (Parser s) where
     fail msg = Parser $ \input -> Failure (msg, input)
 
 -- slightly annoying Stream conditions because we use lengthS to improve errors
-instance (Stream s) => Alternative (Parser s) where
+instance Alternative (Parser s) where
     empty = Parser $ \input ->
         Failure ("Empty parser", input)
 
-    -- p1 <|> p2 = Parser $ \input ->
-    --     case runParser p1 input of
-    --         Success result -> Success result
-    --         Failure (err1, remaining1) ->
-    --             case runParser p2 input of
-    --                 Success result -> Success result
-    --                 -- if both parsers fail take the error from the parser that consumed more
-    --                 Failure (err2, remaining2) ->
-    --                     case compare (lengthS remaining1) (lengthS remaining2) of
-    --                         LT -> Failure (err1, remaining1)
-    --                         EQ -> Failure (err1 ++ " or " ++ err2, remaining1)
-    --                         GT -> Failure (err2, remaining2)
-
-    p1 <|> p2 = Parser $ \input ->
-        case runParser p1 input of
+    (<|>) :: Parser s a -> Parser s a -> Parser s a
+    p1 <|> p2 = Parser $ \st ->
+        case runParser p1 st of
             Success result -> Success result
-            Failure (err1, remaining1) ->
-                case runParser p2 input of
-                    Success result -> Success result
-                    -- if both parsers fail take the error from the parser that consumed more
-                    Failure (err2, remaining2) ->
-                        case compare (lengthS remaining1) (lengthS remaining2) of
-                            LT -> Failure (err1, remaining1)
-                            EQ -> Failure (err1 ++ " or " ++ err2, remaining1)
-                            GT -> Failure (err2, remaining2)
+            Failure (err1, st1) ->
+                case runParser p2 st of
+                        Success result -> Success result
+                        -- if both parsers fail take the error from the parser that consumed more
+                        Failure (err2, st2) ->
+                            case compare (pos st1) (pos st2) of
+                                GT -> Failure (err1, st1)
+                                EQ -> Failure (err1 ++ " or " ++ err2, st1)
+                                LT -> Failure (err2, st2)
 
-
-    many p = Parser $ \input ->
-        case runParser p input of
-            Failure _ -> Success ([], input)
-            Success (x, rest) ->
-                case runParser (many p) rest of
-                    Failure _ -> Success ([x], rest)
-                    Success (xs, finalRest) -> Success (x : xs, finalRest)
-
-    some p = do
-        x <- p
-        xs <- many p
-        return (x : xs)
 
 newtype Committed s a = Committed {unCommitted :: Parser s a}
+newtype Cut s a = Cut {unCut :: Parser s a}
 
 try' :: Either (Committed s a) (Parser s a) -> Parser s a
 try' (Right p) = try p  -- The usual backtracking try.
@@ -199,10 +173,11 @@ try' (Left (Committed p)) = p  -- Strip the commit wrapper and don’t reset on 
 
 -- Get any token
 anyToken :: (Stream s) => Parser s (Elem s)
-anyToken = Parser $ \input ->
-    case uncons input of
-        Nothing -> Failure ("Unexpected end of input", input)
-        Just (t, rest) -> Success (t, rest)
+anyToken = Parser $ \st ->
+    case uncons (input st) of
+        Nothing -> Failure ("Unexpected end of input", st)
+        Just (t, rest) -> Success (t, st')
+          where st' = st {input = rest, pos = pos st + 1 }
 
 -- Match a token that satisfies a predicate
 satisfy :: (Stream s) => (Elem s -> Bool) -> String -> Parser s (Elem s)
@@ -216,15 +191,33 @@ satisfy pred expected = try $ do
 token :: (Stream s) => Elem s -> Parser s (Elem s)
 token t = satisfy (== t) (show t)
 
+-- Parse anything that's not a particular token
 notToken :: (Stream s) => Elem s -> Parser s (Elem s)
 notToken t = satisfy (/= t) ("not " ++ show t)
 
+
+
+-- -- Parse a sequence of tokens
+-- tokens :: (Stream s) => [Elem s] -> Parser s [Elem s]
+-- tokens ts = Parser $ \st ->
+--     let inp = input st
+--         st' =
+--     in if ts `isSeqPrefixOf` inp
+--         then Success (ts, dropS (length ts) inp)
+--         else Failure ("Expected " ++ show ts, inp)
+
 -- Parse a sequence of tokens
 tokens :: (Stream s) => [Elem s] -> Parser s [Elem s]
-tokens ts = Parser $ \input ->
-    if ts `isSeqPrefixOf` input
-        then Success (ts, dropS (length ts) input)
-        else Failure ("Expected " ++ show ts, input)
+tokens ts = Parser $ \st ->
+  let inp = input st
+      n   = lengthS ts
+  in if ts `isSeqPrefixOf` inp
+        then let rest   = dropS n inp
+                 newPos = pos st + n
+                 newSt  = st { input = rest, pos = newPos }
+             in Success (ts, newSt)
+        else Failure ("Expected " ++ show ts, st)
+
 
 -- Parse one of the tokens in the list
 -- oneOf :: (Stream s) => [Elem s] -> Parser s (Elem s)
@@ -266,6 +259,33 @@ optional p = (Just <$> p) <|> pure Nothing
 choice :: (Stream s) => [Parser s a] -> Parser s a
 choice = asum
 -- choice = foldr (<|>) empty
+
+{-
+
+-}
+
+asdf open close n  = Parser $ \st ->
+    let inp = (input st)
+        a = runParser open  inp
+        b = runParser close inp
+    in case (a,b) of
+        (Success
+
+    case runParser open  of
+        (
+
+
+-- -- parse something between matching pairs
+inMatching open close p = do
+  _ <- open
+  content <-
+  _ <- close
+
+  where
+    bt = between open close
+
+      stuff <- many  noneOf [open,close]
+      
 
 -- Parse something between delimiters
 between :: Parser s open -> Parser s close -> Parser s a -> Parser s a
