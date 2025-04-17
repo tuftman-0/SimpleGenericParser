@@ -46,6 +46,7 @@ module SimpleGenericParser (
 ) where
 
 import Control.Applicative (Alternative (..))
+import Data.Monoid (Monoid, mappend, mempty)
 import Data.Char (isAlpha, isAlphaNum, isDigit, isSpace)
 import Data.Foldable (asum)
 import Data.Kind (Type)
@@ -126,6 +127,7 @@ instance Functor (Parser s) where
 instance Applicative (Parser s) where
     pure x = Parser $ \input -> Success (x, input)
 
+    (<*>) :: Parser s (a -> b) -> Parser s a -> Parser s b
     pf <*> px = Parser $ \input ->
         case runParser pf input of
             Failure err -> Failure err
@@ -154,14 +156,21 @@ instance Alternative (Parser s) where
             Success result -> Success result
             Failure (err1, st1) ->
                 case runParser p2 st of
-                        Success result -> Success result
-                        -- if both parsers fail take the error from the parser that consumed more
-                        Failure (err2, st2) ->
-                            case compare (pos st1) (pos st2) of
-                                GT -> Failure (err1, st1)
-                                EQ -> Failure (err1 ++ " or " ++ err2, st1)
-                                LT -> Failure (err2, st2)
+                    Success result -> Success result
+                    -- if both parsers fail take the error from the parser that consumed more
+                    Failure (err2, st2) ->
+                        case compare (pos st1) (pos st2) of
+                            GT -> Failure (err1, st1)
+                            EQ -> Failure (err1 ++ " or " ++ err2, st1)
+                            LT -> Failure (err2, st2)
 
+
+instance Monoid a => Semigroup (Parser s a) where
+    p1 <> p2 = liftA2 mappend p1 p2
+
+instance Monoid a => Monoid (Parser s a) where
+    mempty = pure mempty
+    mappend = (<>)
 
 newtype Committed s a = Committed {unCommitted :: Parser s a}
 newtype Cut s a = Cut {unCut :: Parser s a}
@@ -175,7 +184,7 @@ try' (Left (Committed p)) = p  -- Strip the commit wrapper and don’t reset on 
 anyToken :: (Stream s) => Parser s (Elem s)
 anyToken = Parser $ \st ->
     case uncons (input st) of
-        Nothing -> Failure ("Unexpected end of input", st)
+        Nothing -> Failure ("End Of Input", st)
         Just (t, rest) -> Success (t, st')
           where st' = st {input = rest, pos = pos st + 1 }
 
@@ -218,6 +227,12 @@ tokens ts = Parser $ \st ->
              in Success (ts, newSt)
         else Failure ("Expected " ++ show ts, st)
 
+concatParsers :: (Foldable t, Monoid a) => t (Parser s a) -> Parser s a
+concatParsers = foldr (liftA2 mappend) (pure mempty)
+-- concatParsers = foldr (\x y -> (<>) <$> x <*> y) (pure mempty)
+
+tokens' :: (Stream s) => [Elem s] -> Parser s [Elem s]
+tokens' = traverse token
 
 -- Parse one of the tokens in the list
 -- oneOf :: (Stream s) => [Elem s] -> Parser s (Elem s)
@@ -252,51 +267,52 @@ modifyError parser modify = Parser $ \input ->
         success -> success
 
 -- Parse optional value
-optional :: (Stream s) => Parser s a -> Parser s (Maybe a)
+optional :: Parser s a -> Parser s (Maybe a)
 optional p = (Just <$> p) <|> pure Nothing
 
 -- Parse one of a list of parsers
-choice :: (Stream s) => [Parser s a] -> Parser s a
+choice :: [Parser s a] -> Parser s a
 choice = asum
 -- choice = foldr (<|>) empty
 
-{-
-
--}
-
-asdf open close n  = Parser $ \st ->
-    let inp = (input st)
-        a = runParser open  inp
-        b = runParser close inp
-    in case (a,b) of
-        (Success
-
-    case runParser open  of
-        (
-
-
--- -- parse something between matching pairs
-inMatching open close p = do
-  _ <- open
-  content <-
-  _ <- close
-
-  where
-    bt = between open close
-
-      stuff <- many  noneOf [open,close]
-      
+-- | Parse between matching pairs of tokens, handling nested pairs correctly
+-- matchingPair :: Parser s [Elem s] -> Parser s [Elem s] -> Parser s [Elem s]
+-- matchingPair openP closeP = do
+--     _ <- openP
+--     content <- collectWithin 0 []
+--     return (reverse content)
+--   where
+--     collectWithin :: Int -> [Elem s] -> Parser s [Elem s]
+--     collectWithin nestLevel acc = do
+--         -- Try to match a closing token
+--         (do
+--             close <- closeP
+--             if nestLevel == 0
+--                 then return acc  -- Found the matching close, we're done
+--                 else collectWithin (nestLevel - 1) (close ++ acc)  -- Continue with decreased nesting
+--           ) <|>
+--         -- Try to match an opening token (increases nesting)
+--           (do
+--             open <- openP
+--             collectWithin (nestLevel + 1) (open ++ acc)
+--           ) <|>
+--         -- Any other token is part of the content
+--           (do
+--             tok <- anyToken
+--             collectWithin nestLevel (tok : acc)
+--           )
+--         <|> fail "Unclosed matching pair"
 
 -- Parse something between delimiters
 between :: Parser s open -> Parser s close -> Parser s a -> Parser s a
 between open close p = open *> p <* close
 
 -- Parse zero or more occurrences separated by delimiter
-sepBy :: (Stream s) => Parser s a -> Parser s sep -> Parser s [a]
+sepBy :: Parser s a -> Parser s sep -> Parser s [a]
 sepBy p sep = sepBy1 p sep <|> pure []
 
 -- Parse one or more occurrences separated by delimiter
-sepBy1 :: (Stream s) => Parser s a -> Parser s sep -> Parser s [a]
+sepBy1 :: Parser s a -> Parser s sep -> Parser s [a]
 sepBy1 p sep = do
     x <- p
     xs <- many (sep *> p)
