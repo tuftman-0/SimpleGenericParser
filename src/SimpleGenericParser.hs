@@ -77,11 +77,13 @@ mkInitialState s = ParserState { input = s, pos = 0 }
 newtype Parser s a = Parser {runParser :: ParserState s -> Either (ParseError, ParserState s) (a, ParserState s)}
 
 
-parse :: Parser s a -> s -> Either (String, s) (a, s)
-parse p s =
-    case runParser p (mkInitialState s) of
-      Success (a,   st) -> Success (a, input st)
-      Failure (err, st) -> Failure (err, input st)
+parse :: Parser s a -> s -> Either (ParseError, ParserState s) (a, ParserState s)
+parse p s = runParser p (mkInitialState s)
+-- parse :: Parser s a -> s -> Either (ParseError, s) (a, s)
+-- parse p s =
+--     case runParser p (mkInitialState s) of
+--       Success (a,   st) -> Success (a, input st)
+--       Failure (err, st) -> Failure (err, input st)
 
 -- generic Stream class so you can Implement your own Instances for whatever type e.g. Text/ByteString
 class (Eq (Elem s), Show (Elem s)) => Stream s where
@@ -251,20 +253,19 @@ try p = Parser $ \input ->
         Failure (msg, _) -> Failure (msg, input)
         success -> success
 
--- -- A committed choice combinator (or cut)
--- commit :: Parser s a -> Parser s a
--- commit p = Parser $ \input ->
---   case runParser p input of
---       Failure err -> err `seq` Failure err  -- The key is that input is not reset!
---       success -> success
-
-
--- modifies the error of a parser on failure using a function (modifyErr)
-modifyError :: Parser s a -> (String -> String) -> Parser s a
+-- modifies the error of a parser on failure using a function
+modifyError :: Parser s a -> (ParseError -> ParseError) -> Parser s a
 modifyError parser modify = Parser $ \input ->
     case runParser parser input of
         Failure (msg, remaining) -> Failure (modify msg, remaining)
         success -> success
+
+lookAhead :: Parser s a -> Parser s a
+lookAhead p = Parser $ \st ->
+    case runParser p st of
+        Success (x, _) -> Success (x, st)
+        failure -> failure
+
 
 -- Parse optional value
 optional :: Parser s a -> Parser s (Maybe a)
