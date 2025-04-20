@@ -32,6 +32,7 @@ module SimpleGenericParser (
     sepBy1,
     many,
     some,
+    modifyError,
     -- Character parsers for String
     char,
     string,
@@ -234,13 +235,6 @@ try p = Parser $ \input ->
     case runParser p input of
         Failure (msg, _) -> Failure (msg, input)
         success -> success
-
--- -- A committed choice combinator (or cut)
--- commit :: Parser s a -> Parser s a
--- commit p = Parser $ \input ->
---   case runParser p input of
---       Failure err -> err `seq` Failure err  -- The key is that input is not reset!
---       success -> success
 
 
 -- modifies the error of a parser on failure using a function (modifyErr)
