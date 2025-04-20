@@ -80,7 +80,7 @@ class (Eq (Elem s), Show (Elem s)) => Stream s where
     showInput :: s -> String
 
 -- Constraint for Arbitrary Stream s with element type e (requires ConstraintKinds, TypeOperators)
-type StreamOf s e = (Stream s, Elem s ~ e)
+type StreamOf e s = (Stream s, Elem s ~ e)
 
 -- Stream instance for lists of tokens
 instance (Eq a, Show a) => Stream [a] where
