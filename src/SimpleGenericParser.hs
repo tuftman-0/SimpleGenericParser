@@ -276,29 +276,29 @@ sepBy1 p sep = do
 
 -- Character-specific parsers (for Char streams)
 -- char :: Char -> Parser String Char
-char :: (StreamOf s Char) => Char -> Parser s Char
+char :: (StreamOf Char s) => Char -> Parser s Char
 char = token
 
 -- string :: String -> Parser String String
-string :: (StreamOf s Char) => String -> Parser s String
+string :: (StreamOf Char s) => String -> Parser s String
 string = tokens
 
 -- spaces :: Parser String String
-spaces :: (StreamOf s Char) => Parser s String
+spaces :: (StreamOf Char s) => Parser s String
 spaces = many (char ' ')
 
 -- whitespace :: Parser String String
-whitespace :: (StreamOf s Char) => Parser s String
+whitespace :: (StreamOf Char s) => Parser s String
 whitespace = many (satisfy isSpace "whitespace")
 
 -- digit :: Parser String Char
-digit :: (StreamOf s Char) => Parser s Char
+digit :: (StreamOf Char s) => Parser s Char
 digit = satisfy isDigit "digit"
 
 -- letter :: Parser String Char
-letter :: (StreamOf s Char) => Parser s Char
+letter :: (StreamOf Char s) => Parser s Char
 letter = satisfy isAlpha "letter"
 
 -- alphaNum :: Parser String Char
-alphaNum :: (StreamOf s Char) => Parser s Char
+alphaNum :: (StreamOf Char s) => Parser s Char
 alphaNum = satisfy isAlphaNum "alphanumeric character"
