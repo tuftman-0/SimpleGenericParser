@@ -4,6 +4,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE InstanceSigs #-}
 
 
 module SimpleGenericParser (
@@ -45,6 +46,7 @@ module SimpleGenericParser (
     StreamOf,
 ) where
 
+
 import Control.Applicative (Alternative (..))
 import Data.Char (isAlpha, isAlphaNum, isDigit, isSpace)
 import Data.Foldable (asum)
@@ -53,15 +55,13 @@ import qualified Data.List as List
 
 type ParseError = String
 
+
+-- I use these pattern synonyms so that things are clearer but you could just as easily use Either where Left is the Failure case and Right is the Success case
 pattern Success :: (a, s) -> Either (ParseError, s) (a, s)
 pattern Success result = Right result
--- pattern Success result <- Right result
---   where Success result = Right result
 
 pattern Failure :: (String, s) -> Either (ParseError, s) (a, s)
 pattern Failure err = Left err
--- pattern Failure err <- Left err
---   where Failure err = Left err
 
 -- generic Stream class so you can Implement your own Instances for whatever type e.g. Text/ByteString
 class (Eq (Elem s), Show (Elem s)) => Stream s where
@@ -117,6 +117,10 @@ instance Functor (Parser s) where
         case runParser parser input of
             Success (v, rest) -> Success (f v, rest)
             Failure err -> Failure err
+    -- -- alternate definition in terms of the monad instance
+    -- fmap f parser = do
+    --   v <- parser
+    --   return (f v)
 
 instance Applicative (Parser s) where
     pure x = Parser $ \input -> Success (x, input)
@@ -129,7 +133,15 @@ instance Applicative (Parser s) where
                     Failure err -> Failure err
                     Success (x, rest') -> Success (f x, rest')
 
+    -- -- alternate definition in terms of the monad instance
+    -- pf <*> px = do
+    --   f <- pf
+    --   x <- px
+    --   return (f x)
+
 instance Monad (Parser s) where
+    -- monad instance essentially just handles the errors so if you chain a bunch of parser monadic actions if any of them fail, it'll short circuit and output whatever error
+    -- 
     parser >>= f = Parser $ \input ->
         case runParser parser input of
             Failure err -> Failure err
@@ -142,19 +154,6 @@ instance MonadFail (Parser s) where
 instance (Stream s) => Alternative (Parser s) where
     empty = Parser $ \input ->
         Failure ("Empty parser", input)
-
-    -- p1 <|> p2 = Parser $ \input ->
-    --     case runParser p1 input of
-    --         Success result -> Success result
-    --         Failure (err1, remaining1) ->
-    --             case runParser p2 input of
-    --                 Success result -> Success result
-    --                 -- if both parsers fail take the error from the parser that consumed more
-    --                 Failure (err2, remaining2) ->
-    --                     case compare (lengthS remaining1) (lengthS remaining2) of
-    --                         LT -> Failure (err1, remaining1)
-    --                         EQ -> Failure (err1 ++ " or " ++ err2, remaining1)
-    --                         GT -> Failure (err2, remaining2)
 
     p1 <|> p2 = Parser $ \input ->
         case runParser p1 input of
@@ -169,25 +168,24 @@ instance (Stream s) => Alternative (Parser s) where
                             EQ -> Failure (err1 ++ " or " ++ err2, remaining1)
                             GT -> Failure (err2, remaining2)
 
+    -- unnecessary implementations (haskell has equivalent default implementations based on <|> and empty)
+    -- many p = Parser $ \input ->
+    --     case runParser p input of
+    --         Failure _ -> Success ([], input)
+    --         Success (x, rest) ->
+    --             case runParser (many p) rest of
+    --                 Failure _ -> Success ([x], rest)
+    --                 Success (xs, finalRest) -> Success (x : xs, finalRest)
 
-    many p = Parser $ \input ->
-        case runParser p input of
-            Failure _ -> Success ([], input)
-            Success (x, rest) ->
-                case runParser (many p) rest of
-                    Failure _ -> Success ([x], rest)
-                    Success (xs, finalRest) -> Success (x : xs, finalRest)
-
+    -- takes a parser p and returns another parser that tries p 1 or more times, collecting the results into a list upon successful parsing.
     some p = do
-        x <- p
-        xs <- many p
-        return (x : xs)
+        x <- p          -- try to parse one item using parser p failing if it fails
+        xs <- many p    -- parse as many results as you can using p
+        pure (x : xs)   -- wrap the list of results in a parser
 
-newtype Committed s a = Committed {unCommitted :: Parser s a}
-
-try' :: Either (Committed s a) (Parser s a) -> Parser s a
-try' (Right p) = try p  -- The usual backtracking try.
-try' (Left (Committed p)) = p  -- Strip the commit wrapper and don’t reset on failure.
+    -- same as some but upon failure just gives a parser with an empty list of results
+    many :: Stream s => Parser s a -> Parser s [a]
+    many p = some p <|> pure []
 
 
 -- Get any token
@@ -236,8 +234,7 @@ try p = Parser $ \input ->
         Failure (msg, _) -> Failure (msg, input)
         success -> success
 
-
--- modifies the error of a parser on failure using a function (modifyErr)
+-- modifies the error of a parser on failure using a function
 modifyError :: Parser s a -> (String -> String) -> Parser s a
 modifyError parser modify = Parser $ \input ->
     case runParser parser input of
